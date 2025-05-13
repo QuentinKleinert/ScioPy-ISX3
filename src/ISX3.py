@@ -32,7 +32,7 @@ class ISX3:
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
             )
-            print("Connection to", self.device.name, "is established.")
+            print(f"Connected to {self.device.name}.")
         except serial.SerialException as e:
             print("Error: ", e)
 
@@ -40,7 +40,7 @@ class ISX3:
         self.device.reset_input_buffer()
         self.device.write(bytearray([0xB1, 0x00, 0xB1]))
 
-        response = self.device.read(32)  #reads 32 Bytes
+        response = self.device.read(32)  # reads 32 Bytes
         print("Raw response:", response.hex())
 
         # Search for valid B1-Frames (Start == 0xB1, End == 0xB1, Length == 6)
@@ -67,30 +67,31 @@ class ISX3:
     B6                // [CT] Control Token - Start of command
     16                // [LE] Length of command data: 22 bytes follow
     03                // [OB] Operation Byte: 0x03 = Add frequency list
-    
+
     44 7A 00 00       // [CD] Start frequency = 1000.0 Hz (float)
                       // → Sets the beginning of the frequency sweep
-    
+
     4B 18 96 80       // Stop frequency = 10,000,000.0 Hz (float)
                       // → Sets the end of the frequency sweep
-    
+
     42 F0 00 00       // Count = 60.0 (float)
                       // → Sets how many frequency points will be used in the sweep
-    
+
     01                // Scale = 0x01
                       // → 0x00 = linear scale, 0x01 = logarithmic scale
-    
+
     3F 80 00 00       // Precision = 1.0 (float)
                       // → Defines the measurement precision/resolution
-    
+
     3D CC CC CD       // Amplitude = 0.1 V (float)
                       // → Peak excitation voltage to use for each frequency point
-    
+
     B6                // [CT] Control Token - End of command
 
     """
+
     def set_setup(self):
-        #sets up the setup
+        # sets up the setup
         self.device.write(bytearray([0xB6, 0x16, 0x03, 0x44, 0x7A, 0x00, 0x00, 0x4B, 0x18, 0x96, 0x80, 0x42, 0xF0, 0x00,
                                      0x00, 0x01, 0x3F, 0x80, 0x00, 0x00, 0x3D, 0xCC, 0xCC, 0xCD, 0xB6]))
 
@@ -132,5 +133,3 @@ class ISX3:
         print("Measure data was saved in 'measurement_results.csv'.")
 
         return results
-
-
