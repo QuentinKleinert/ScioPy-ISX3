@@ -116,6 +116,9 @@ class ISX3:
         num_points = 60 * cycles
         for _ in range(num_points):
             response = self.device.read(13)  # [CT] 0A [ID] [Real] [Imag] [CT] = 13 Bytes
+            if len(response) != 13:
+                print(f"Warning: Incomplete data received: {response.hex()}")
+                continue
 
             freq_id = int.from_bytes(response[2:4], byteorder='big')
             real = struct.unpack('>f', response[4:8])[0]
