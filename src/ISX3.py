@@ -30,6 +30,6 @@ class ISX3:
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
             )
-            print(f"Connected to {self.device.name}.")
+            print("Connection to", self.device.name, "is established.")
         except serial.SerialException as e:
             print("Error: ", e)
