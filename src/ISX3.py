@@ -66,9 +66,8 @@ class ISX3:
         print("Set the fs Settings.")
 
     def set_setup(self, setup):
-        # sets up the setup
-        #self.device.write(bytearray([0xB6, 0x16, 0x03, 0x44, 0x7A, 0x00, 0x00, 0x4B, 0x18, 0x96, 0x80, 0x42, 0xF0, 0x00,
-                                     #0x00, 0x01, 0x3F, 0x80, 0x00, 0x00, 0x3D, 0xCC, 0xCC, 0xCD, 0xB6]))
+        # resets the setup
+        self.device.write(bytearray([0x86, 0x01, 0x01, 0x86]))
 
         self.device.write(bytearray(setup))
 
@@ -89,18 +88,27 @@ class ISX3:
 
         print(f"Started measurement for {cycles} cycles.")
 
-        # Read results (assumes 60 frequency points per cycle × cycles total)
+        # Read results (frequency points per cycle × cycles total)
         num_points = frequency_points * cycles
         for _ in range(num_points):
-            response = self.device.read(13)  # [CT] 0A [ID] [Real] [Imag] [CT] = 13 Bytes
+            response = self.device.read(13)  # [CT] 0A [ID] [Real] [Imag] [CT]
             if len(response) == 0:
                 print("Empty response.")
                 continue
 
-            if len(response) != 13:
+            if len(response) < 13:
                 print(f"ACK received: {response.hex()}")
                 continue
 
+            """
+            when time stamp and current range are disabled the response is 13 Bytes long
+            0 : CT (Start)
+            1 : LE
+            2-3 : Frequency ID
+            4-7: Real part
+            8-11: imaginary part
+            12: CT (End)
+            """
             freq_id = int.from_bytes(response[2:4], byteorder='big')
             real = struct.unpack('>f', response[4:8])[0]
             imag = struct.unpack('>f', response[8:12])[0]
