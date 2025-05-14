@@ -35,10 +35,11 @@ isx3.get_fs_settings()
     B6                // [CT] Control Token - End of command
 
     """
+# sets the settings
 isx3.set_setup([0xB6, 0x16, 0x03, 0x44, 0x7A, 0x00, 0x00, 0x4B, 0x18, 0x96, 0x80, 0x42, 0xF0, 0x00, 0x00, 0x01, 0x3F,
                 0x80, 0x00, 0x00, 0x3D, 0xCC, 0xCC, 0xCD, 0xB6])
 
 
 #starts and stops the measurement, add more or less cycles if necessary
-results = isx3.start_measurement(cycles=20)
-print(results)
+results = isx3.start_measurement(cycles=20, frequency_points=60)
+print("Results array: ", results)

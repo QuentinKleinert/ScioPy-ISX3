@@ -32,7 +32,7 @@ class ISX3:
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
             )
-            print(f"Connected to {self.device.name}.")
+            print(f"Connected to {self.device.name}. \n")
         except serial.SerialException as e:
             print("Error: ", e)
 
@@ -55,6 +55,7 @@ class ISX3:
                 return
 
         print("No valid B1 frame found.")
+        print("\n")
 
     def set_fs_settings(self, settings):
         # empty the stack
@@ -71,9 +72,9 @@ class ISX3:
 
         self.device.write(bytearray(setup))
 
-        print("Set the setup.")
+        print("Set the setup. \n")
 
-    def start_measurement(self, cycles: int = 20):
+    def start_measurement(self, cycles: int = 20, frequency_points: int = 60):
         results = []
 
         if not self.device:
@@ -89,9 +90,13 @@ class ISX3:
         print(f"Started measurement for {cycles} cycles.")
 
         # Read results (assumes 60 frequency points per cycle × cycles total)
-        num_points = 60 * cycles
+        num_points = frequency_points * cycles
         for _ in range(num_points):
             response = self.device.read(13)  # [CT] 0A [ID] [Real] [Imag] [CT] = 13 Bytes
+            if len(response) == 0:
+                print("Empty response.")
+                continue
+
             if len(response) != 13:
                 print(f"ACK received: {response.hex()}")
                 continue
@@ -111,6 +116,6 @@ class ISX3:
             writer.writerow(['Frequency ID', 'Real Part', 'Imaginary Part'])  # Header
             writer.writerows(results)
 
-        print("Measure data was saved in 'measurement_results.csv'.")
+        print("Measure data was saved in 'measurement_results.csv'. \n")
 
         return results
