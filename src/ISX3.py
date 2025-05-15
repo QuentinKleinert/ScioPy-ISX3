@@ -37,46 +37,139 @@ class ISX3:
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
             )
-            print(f"Connected to {self.device.name}. \n")
+            print(f"Successfully Connected to {self.device.name}. \n")
         except serial.SerialException as e:
             print("Error: ", e)
 
-    def set_fs_settings(self, measurement_mode, measurement_channel, current_measurement_range, voltage_measurement_range = "1V"):
-        # empty the stack
+    def set_fs_settings(self, measurement_mode, measurement_channel="Main Port",
+                        current_measurement_range="autoranging", voltage_measurement_range="1V"):
+        # Clear stack to avoid overflow
         self.device.write(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
 
-        settings = [0xB0, 0x04, int(input_user.check_measurement_mode(measurement_mode)),
-                    input_user.check_measurement_channel(measurement_channel),
-                    input_user.check_current_range_settings(current_measurement_range),
-                    input_user.check_voltage_range_settings(voltage_measurement_range), 0xB0]
+        # Convert parameters
+        mode = input_user.check_measurement_mode(measurement_mode)
+        current_range = input_user.check_current_range_settings(current_measurement_range)
+        voltage_range = input_user.check_voltage_range_settings(voltage_measurement_range)
+        channel_code = input_user.check_measurement_channel(measurement_channel)
 
-        if -1 in settings:
-            print("Invalid Input for fs Settings. Using default settings")
-            settings = [0xB0, 0x03, 0x02, 0x01, 0x00, 0xB0]
+        if -1 in [mode, current_range, voltage_range, channel_code]:
+            print("Invalid input detected. Aborting.")
+            return
 
-        self.device.write(bytearray(settings))
-        print("Response ", self.device.read(4))
-        print("Set the fs Settings.")
+        # 2-byte extension channels (default to 0x0000 if not used)
+        ext = [0x00, 0x00]
+
+        # Build command based on measurement mode
+        if mode == 0x01:  # 2-point
+            command = [
+                0xB0, 0x09, mode, current_range, voltage_range,
+                channel_code, *ext,  # C channel
+                channel_code, *ext,  # W channel
+                0xB0
+            ]
+        elif mode == 0x03:  # 3-point
+            command = [
+                0xB0, 0x0C, mode, current_range, voltage_range,
+                channel_code, *ext,  # C channel
+                channel_code, *ext,  # R channel
+                channel_code, *ext,  # W channel
+                0xB0
+            ]
+        elif mode == 0x02:  # 4-point
+            command = [
+                0xB0, 0x0F, mode, current_range, voltage_range,
+                channel_code, *ext,  # C channel
+                channel_code, *ext,  # R channel
+                channel_code, *ext,  # S channel
+                channel_code, *ext,  # W channel
+                0xB0
+            ]
+        else:
+            print("Unsupported measurement mode. Aborting.")
+            return
+
+        self.device.write(bytearray(command))
+        response = self.device.read(4)
+        print("Response from device: ", response)
+        print("FS settings applied.\n")
 
     def get_fs_settings(self):
         self.device.reset_input_buffer()
-        self.device.write(bytearray([0xB1, 0x00, 0xB1]))
 
-        response = self.device.read(32)  # reads 32 Bytes
-        print("Raw response:", response.hex())
+        # Step 1: Query number of configured channels
+        request = bytearray([0xB1, 0x03, 0x02, 0x00, 0xB1])
+        self.device.write(request)
+        response = self.device.read(16)
 
-        # Search for valid B1-Frames (Start == 0xB1, End == 0xB1, Length == 6)
-        for i in range(len(response) - 5):
-            if response[i] == 0xB1 and response[i + 6] == 0xB1:
-                frame = response[i:i + 7]
-                print("B1-Frame found: ", frame.hex())
-                mode, channel, current, voltage = frame[2:6]
-                print(
-                    f"measurement mode: 0x{mode:02X}, measurement channel: 0x{channel:02X}, "
-                    f"current range settings: 0x{current:02X}, voltage range settings: 0x{voltage:02X}")
-                return
+        print("Channel count response:", response.hex())
 
-        print("No valid B1 frame found.")
+        if len(response) < 6 or response[0] != 0xB1 or response[-1] != 0xB1:
+            print("No valid B1 response frame for channel count.\n")
+            return
+
+        num_channels = int.from_bytes(response[2:4], 'big')
+        print(f"Number of configured channels: {num_channels}")
+
+        if num_channels == 0:
+            print("No configured frontend channels.\n")
+            return
+
+        # Step 2: Query each channel config
+        for ch in range(1, num_channels + 1):
+            self.device.reset_input_buffer()
+            self.device.write(bytearray([0xB1, 0x02, ch, 0xB1]))
+            response = self.device.read(32)
+
+            print(f"\nRaw response for channel {ch}:", response.hex())
+
+            for i in range(len(response)):
+                if response[i] == 0xB1:
+                    end_index = response.find(b'\xB1', i + 1)
+                    if end_index != -1:
+                        frame = response[i:end_index + 1]
+                        print("Valid B1 Frame found:", frame.hex())
+
+                        frame_type = frame[1]
+                        mode = frame[2]
+                        current = frame[3]
+                        voltage = frame[4]
+
+                        def get_channel_info(start_index):
+                            ch = frame[start_index]
+                            ext = int.from_bytes(frame[start_index + 1:start_index + 3], 'big')
+                            print("\n")
+                            return ch, ext
+
+                        if frame_type == 0x09 and len(frame) == 17:  # 2-point
+                            ch_c, ext_c = get_channel_info(5)
+                            ch_w, ext_w = get_channel_info(8)
+                            print("2-point configuration:")
+                            print(f"Mode: 0x{mode:02X}, Current: 0x{current:02X}, Voltage: 0x{voltage:02X}")
+                            print(f"C: 0x{ch_c:02X} (ext: {ext_c}), W: 0x{ch_w:02X} (ext: {ext_w})")
+
+                        elif frame_type == 0x0C and len(frame) == 20:  # 3-point
+                            ch_c, ext_c = get_channel_info(5)
+                            ch_r, ext_r = get_channel_info(8)
+                            ch_w, ext_w = get_channel_info(11)
+                            print("3-point configuration:")
+                            print(f"Mode: 0x{mode:02X}, Current: 0x{current:02X}, Voltage: 0x{voltage:02X}")
+                            print(
+                                f"C: 0x{ch_c:02X} (ext: {ext_c}), R: 0x{ch_r:02X} (ext: {ext_r}), W: 0x{ch_w:02X} (ext: {ext_w})")
+
+                        elif frame_type == 0x0F and len(frame) == 23:  # 4-point
+                            ch_c, ext_c = get_channel_info(5)
+                            ch_r, ext_r = get_channel_info(8)
+                            ch_s, ext_s = get_channel_info(11)
+                            ch_w, ext_w = get_channel_info(14)
+                            print("4-point configuration:")
+                            print(f"Mode: 0x{mode:02X}, Current: 0x{current:02X}, Voltage: 0x{voltage:02X}")
+                            print(f"C: 0x{ch_c:02X} (ext: {ext_c}), R: 0x{ch_r:02X} (ext: {ext_r}), "
+                                  f"S: 0x{ch_s:02X} (ext: {ext_s}), W: 0x{ch_w:02X} (ext: {ext_w})")
+                        else:
+                            print("Unknown or unsupported frame format.")
+                        break
+            else:
+                print("No valid B1 frame found for this channel.")
         print("\n")
 
     def set_setup(self, start_frequency, end_frequency, count, scale, precision, amplitude, excitation_type):
@@ -127,58 +220,117 @@ class ISX3:
 
         print("Set the setup. \n")
 
+    def get_setup(self):
+        pass
 
-    def start_measurement(self, cycles: int = 20):
+    def start_measurement(self, spectres: int = 20):
         results = []
+
+        spectres = input_user.check_input_spectres(spectres)
 
         if not self.device:
             print("Device not connected.")
             return results
 
         # Send measurement start command
-        repeat_low = cycles & 0xFF
-        repeat_high = (cycles >> 8) & 0xFF
-        command = bytearray([0xB8, 0x03, 0x01, repeat_high, repeat_low, 0xB8])
+        repeat_low = spectres & 0xFF
+        repeat_high = (spectres >> 8) & 0xFF
+        command = bytearray([0xB8, 0x03, 0x01, 0x00, spectres, 0xB8])
+        # [CT] Start, [LE] Length, [OB] Operation (Start/Stop), [CD], [CT] End
         self.device.write(command)
 
-        print(f"Started measurement for {cycles} cycles.")
+        print(f"Started measurement for {spectres} cycles.")
 
-        # Read results (frequency points per cycle × cycles total)
-        num_points = self.frequency_points * cycles
+        num_points = self.frequency_points * spectres
+
         for _ in range(num_points):
-            response = self.device.read(13)  # [CT] 0A [ID] [Real] [Imag] [CT]
-            if len(response) == 0:
-                print("Empty response.")
+            # Read start byte
+            start_byte = self.device.read(1)
+            print("start byte: ", start_byte)
+            if not start_byte or start_byte[0] != 0xB8:
+                print("Invalid or missing start byte.")
                 continue
 
-            if len(response) < 13:
-                print(f"ACK received: {response.hex()}")
+            # Read frame type
+            header = self.device.read(1)
+            print("header: ", header)
+            if not header:
+                print("Missing header byte.")
                 continue
 
-            """
-            when time stamp and current range are disabled the response is 13 Bytes long
-            0 : CT (Start)
-            1 : LE
-            2-3 : Frequency ID
-            4-7: Real part
-            8-11: imaginary part
-            12: CT (End)
-            """
-            freq_id = int.from_bytes(response[2:4], byteorder='big')
-            real = struct.unpack('>f', response[4:8])[0]
-            imag = struct.unpack('>f', response[8:12])[0]
-            results.append((freq_id, real, imag))
+            frame_type = header[0]
 
-        # to stop measurement mode
+            frame_lengths = {
+                0x0A: 13,
+                0x0B: 14,
+                0x0E: 17,
+                0x0F: 19
+            }
+
+            expected_length = frame_lengths.get(frame_type, 13) - 2  # Already read 2 bytes
+            rest = self.device.read(expected_length)
+            if len(rest) != expected_length:
+                print("Incomplete frame received.")
+                continue
+
+            frame = start_byte + header + rest
+            print("Received Frame:", frame.hex())
+
+            freq_id = int.from_bytes(frame[2:4], 'big')
+            print(f"Frequency ID received: {freq_id}")
+            real, imag = None, None
+            timestamp = None
+            current_range = None
+
+            if frame_type == 0x0A:
+                real = struct.unpack(">f", frame[4:8])[0]
+                imag = struct.unpack(">f", frame[8:12])[0]
+            elif frame_type == 0x0B:
+                current_range = frame[4]
+                real = struct.unpack(">f", frame[5:9])[0]
+                imag = struct.unpack(">f", frame[9:13])[0]
+            elif frame_type == 0x0E:
+                timestamp = int.from_bytes(frame[4:8], 'big')
+                real = struct.unpack(">f", frame[8:12])[0]
+                imag = struct.unpack(">f", frame[12:16])[0]
+            elif frame_type == 0x0F:
+                timestamp = int.from_bytes(frame[4:8], 'big')
+                current_range = frame[8]
+                real = struct.unpack(">f", frame[9:13])[0]
+                imag = struct.unpack(">f", frame[13:17])[0]
+            else:
+                print("Unrecognized frame type.")
+                continue
+
+            results.append((freq_id, real, imag, timestamp, current_range))
+
+        # Stop measurement
         self.device.write(bytearray([0xB8, 0x01, 0x00, 0xB8]))
 
-        #writes it in an CSV File (measurement_results.csv
-        #overwrite the old one every time a new measurement is started
+        # Write to CSV
         with open('measurement_results.csv', mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(['Frequency ID', 'Real Part', 'Imaginary Part'])  # Header
-            writer.writerows(results)
 
-        print("Measure data was saved in 'measurement_results.csv'. \n")
+            # Determine header
+            header = ['Frequency ID', 'Real Part', 'Imaginary Part']
+            if any(r[3] is not None for r in results):
+                header.append('Timestamp')
+            if any(r[4] is not None for r in results):
+                header.append('Current Range')
+            writer.writerow(header)
 
+            # Write each row
+            for r in results:
+                row = [r[0], r[1], r[2]]
+                if 'Timestamp' in header:
+                    row.append(r[3] if r[3] is not None else '')
+                if 'Current Range' in header:
+                    row.append(r[4] if r[4] is not None else '')
+                writer.writerow(row)
+
+        print("Measurement data saved to 'measurement_results.csv'.\n")
+        print("Result Array: ", results)
         return results
+
+
+

@@ -269,3 +269,18 @@ def parse_amplitude(value, excitation_type="voltage"):
         return None  # handled later in check_amplitude
 
 
+def check_input_spectres(spectres):
+    default_spectres = 20
+
+    try:
+        spectres = int(spectres)
+    except (TypeError, ValueError):
+        print("Spectres must be an integer. Setting to default.")
+        return default_spectres
+
+    if not (1 <= spectres <= 65535):
+        print("Spectres out of valid range (1–65535). Setting to default.")
+        return default_spectres
+
+    return spectres
+

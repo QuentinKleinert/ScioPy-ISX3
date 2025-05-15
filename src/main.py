@@ -42,5 +42,5 @@ isx3.set_setup([0xB6, 0x16, 0x03, 0x44, 0x7A, 0x00, 0x00, 0x4B, 0x18, 0x96, 0x80
 
 
 #starts and stops the measurement, add more or less cycles if necessary
-results = isx3.start_measurement(cycles=20, frequency_points=60)
+results = isx3.start_measurement(frequency_points=60)
 print("Results array: ", results)

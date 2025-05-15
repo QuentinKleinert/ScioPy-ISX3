@@ -11,14 +11,16 @@ isx3.set_fs_settings(
     voltage_measurement_range="autoranging"
     )
 
-
 isx3.set_setup(
     start_frequency="1kHz",
     end_frequency="10MHz",
-    count=10,
+    count=5,
     scale="log",
     precision=1.0,
-    amplitude="0.25V",
+    amplitude="100mV",
     excitation_type="voltage"
 )
+
+
+isx3.start_measurement(spectres=10)
 
