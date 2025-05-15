@@ -2,6 +2,9 @@ import struct
 import serial
 import serial.tools.list_ports
 import csv
+import check_User_Input as input_user
+from itertools import chain
+import util
 
 
 class ISX3:
@@ -9,6 +12,8 @@ class ISX3:
         self.n_el = n_el
         self.serial_protocol = None
         self.device = None
+        self.frequency_points = 0
+
 
     def is_port_available(self, port: str) -> bool:
         """Check if the specified COM port is available."""
@@ -36,6 +41,23 @@ class ISX3:
         except serial.SerialException as e:
             print("Error: ", e)
 
+    def set_fs_settings(self, measurement_mode, measurement_channel, current_measurement_range, voltage_measurement_range = "1V"):
+        # empty the stack
+        self.device.write(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
+
+        settings = [0xB0, 0x04, int(input_user.check_measurement_mode(measurement_mode)),
+                    input_user.check_measurement_channel(measurement_channel),
+                    input_user.check_current_range_settings(current_measurement_range),
+                    input_user.check_voltage_range_settings(voltage_measurement_range), 0xB0]
+
+        if -1 in settings:
+            print("Invalid Input for fs Settings. Using default settings")
+            settings = [0xB0, 0x03, 0x02, 0x01, 0x00, 0xB0]
+
+        self.device.write(bytearray(settings))
+        print("Response ", self.device.read(4))
+        print("Set the fs Settings.")
+
     def get_fs_settings(self):
         self.device.reset_input_buffer()
         self.device.write(bytearray([0xB1, 0x00, 0xB1]))
@@ -57,23 +79,56 @@ class ISX3:
         print("No valid B1 frame found.")
         print("\n")
 
-    def set_fs_settings(self, settings):
-        # empty the stack
-        self.device.write(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
-        # set the measurement channel to Main Port / BNC Channel
-        #self.device.write(bytearray([0xB0, 0x03, 0x02, 0x01, 0x00, 0xB0]))
-        self.device.write(bytearray(settings))
-        print("Set the fs Settings.")
-
-    def set_setup(self, setup):
+    def set_setup(self, start_frequency, end_frequency, count, scale, precision, amplitude, excitation_type):
         # resets the setup
         self.device.write(bytearray([0x86, 0x01, 0x01, 0x86]))
 
-        self.device.write(bytearray(setup))
+        self.frequency_points = count
+
+        settings = [
+                    "Start: ", 0xB6, # Start
+                    "Length: ", 0x16,  # Length
+                    "Frequency List Option: ", 0x03, # Add Frequency List
+                    "Start and Stop Frequency: ", input_user.check_frequency_range(start_frequency, end_frequency), #start and stop frequency
+                    "Count: ", input_user.check_count(count), # count
+                    "Scale: ", input_user.check_scale(scale), #scale
+                    "Precision: ", input_user.check_precision(precision), #precision
+                    "Amplitude: ", input_user.check_amplitude(amplitude, excitation_type) # amplitude
+
+                    ]
+        frequency_data = input_user.check_frequency_range(start_frequency, end_frequency)[0] + input_user.check_frequency_range(start_frequency, end_frequency)[1]
+
+        settings_formatted = [0xB6, 0x16, 0x03]
+
+        for data in frequency_data:
+            settings_formatted.append(data)
+
+        for data in input_user.check_count(count):
+            settings_formatted.append(data)
+
+        settings_formatted.append(input_user.check_scale(scale))
+
+        for data in input_user.check_precision(precision):
+            settings_formatted.append(data)
+
+        for data in input_user.check_amplitude(amplitude, excitation_type):
+            settings_formatted.append(data)
+
+        settings_formatted.append(0xB6)
+
+        print("Settings unformatted: ", settings)
+        numbers_in_hex = [util.toHex(number) for number in settings_formatted]
+        print("Numbers in hex: ", numbers_in_hex)
+        print("Settings formatted in Setup: ", settings_formatted)
+
+
+        self.device.write(bytearray(settings_formatted))
+        print("Response for set Setup: ", self.device.read(4))
 
         print("Set the setup. \n")
 
-    def start_measurement(self, cycles: int = 20, frequency_points: int = 60):
+
+    def start_measurement(self, cycles: int = 20):
         results = []
 
         if not self.device:
@@ -89,7 +144,7 @@ class ISX3:
         print(f"Started measurement for {cycles} cycles.")
 
         # Read results (frequency points per cycle × cycles total)
-        num_points = frequency_points * cycles
+        num_points = self.frequency_points * cycles
         for _ in range(num_points):
             response = self.device.read(13)  # [CT] 0A [ID] [Real] [Imag] [CT]
             if len(response) == 0:

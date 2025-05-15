@@ -4,7 +4,8 @@ isx3 = ISX3(n_el=4)
 isx3.connect_device_FS(port="COM3") # change to com port if necessary
 
 #Sets up measurement mode, measurement Channel (MAIN PORT etc.) and range settings
-isx3.set_fs_settings([0xB0, 0x03, 0x02, 0x01, 0x00, 0xB0])
+isx3.set_fs_settings(measurement_mode= 2, measurement_channel="port 2", current_measurement_range="10mA")
+
 isx3.get_fs_settings()
 
 
