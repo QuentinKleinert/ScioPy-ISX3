@@ -232,9 +232,6 @@ class ISX3:
             print("Device not connected.")
             return results
 
-        # Send measurement start command
-        repeat_low = spectres & 0xFF
-        repeat_high = (spectres >> 8) & 0xFF
         command = bytearray([0xB8, 0x03, 0x01, 0x00, spectres, 0xB8])
         # [CT] Start, [LE] Length, [OB] Operation (Start/Stop), [CD], [CT] End
         self.device.write(command)
@@ -244,22 +241,21 @@ class ISX3:
         num_points = self.frequency_points * spectres
 
         for _ in range(num_points):
-            # Read start byte
-            start_byte = self.device.read(1)
-            print("start byte: ", start_byte)
-            if not start_byte or start_byte[0] != 0xB8:
-                print("Invalid or missing start byte.")
-                continue
 
-            # Read frame type
+            start_byte = b''
+            while start_byte != b'\xB8':
+                start_byte = self.device.read(1)
+                if not start_byte:
+                    print("Timeout waiting for start byte.")
+                    continue
+
+
             header = self.device.read(1)
-            print("header: ", header)
             if not header:
                 print("Missing header byte.")
                 continue
 
             frame_type = header[0]
-
             frame_lengths = {
                 0x0A: 13,
                 0x0B: 14,
@@ -267,7 +263,7 @@ class ISX3:
                 0x0F: 19
             }
 
-            expected_length = frame_lengths.get(frame_type, 13) - 2  # Already read 2 bytes
+            expected_length = frame_lengths.get(frame_type, 13) - 2
             rest = self.device.read(expected_length)
             if len(rest) != expected_length:
                 print("Incomplete frame received.")

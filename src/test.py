@@ -14,7 +14,7 @@ isx3.set_fs_settings(
 isx3.set_setup(
     start_frequency="1kHz",
     end_frequency="10MHz",
-    count=5,
+    count=60,
     scale="log",
     precision=1.0,
     amplitude="100mV",
@@ -22,5 +22,5 @@ isx3.set_setup(
 )
 
 
-isx3.start_measurement(spectres=10)
+isx3.start_measurement(spectres=20)
 
