@@ -44,42 +44,59 @@ main.py            # Example usage and measurement sequence
 from src.ISX3 import ISX3
 
 isx3 = ISX3(n_el=4)
-isx3.connect_device_FS(port="COM3")  # Set correct COM port
+isx3.connect_device_FS(port="COM3") # change to com port if necessary
 
-# Set functional settings: mode, channel, current, voltage ranges
-isx3.set_fs_settings([0xB0, 0x03, 0x02, 0x01, 0x00, 0xB0])
-isx3.get_fs_settings()
+isx3.set_fs_settings(
+    measurement_mode= 2,
+    measurement_channel="Main Port",
+    current_measurement_range="10mA",
+    voltage_measurement_range="autoranging"
+    )
 
-# Define frequency sweep: 1 kHz – 10 MHz, 60 points, log scale, 0.1 V amplitude
-isx3.set_setup([
-    0xB6, 0x16, 0x03,
-    0x44, 0x7A, 0x00, 0x00,       # Start Frequency = 1000.0 Hz
-    0x4B, 0x18, 0x96, 0x80,       # Stop Frequency = 10,000,000.0 Hz
-    0x42, 0xF0, 0x00, 0x00,       # 60 points
-    0x01,                         # Logarithmic scale
-    0x3F, 0x80, 0x00, 0x00,       # Precision = 1.0
-    0x3D, 0xCC, 0xCC, 0xCD,       # Amplitude = 0.1 V
-    0xB6                          # End of command
-])
+isx3.set_setup(
+    start_frequency="1kHz",
+    end_frequency="10MHz",
+    count=10,
+    scale="log",
+    precision=1.0,
+    amplitude="100mV",
+    excitation_type="voltage"
+)
 
-# Start measurement (20 cycles)
-results = isx3.start_measurement(cycles=20)
+
+results = isx3.start_measurement(spectres=15)
+
 print(results)
 
 ```
 
 ## 📝 Output
-Results are saved as:
-``` 
-measurement_results.csv 
 ```
-With the format: 
-``` 
-Frequency ID, Real Part, Imaginary Part 
+Successfully Connected to COM3. 
+
+Command-Acknowledge: Command has been executed successfully
+message buffer:
+ ['0x18', '0x1', '0x83', '0x18']
+message length:	 4
+Response from device:  b'\x18\x01\x82\x18'
+FS settings applied.
+
+Set the setup. 
+
+Starts the measuring for 2 Cycles...
+4 Measuring Results were written into measurement_results.csv.
+Command-Acknowledge: Command has been executed successfully
+message buffer:
+ ['0x18', '0x1', '0x83', '0x18']
+message length:	 4
+[(0, 96.88323974609375, 0.014319001697003841), (1, 96.76373291015625, 3.699613571166992), (0, 96.87141418457031, -0.003805396379902959), (1, 96.75221252441406, 3.7035341262817383)]
+
+Process finished with exit code 0
 ```
 
 ## 🧑‍💻 Author
 **Quentin Kleinert**
 
 For questions or contributions, feel free to open an issue or pull request.
+Or contact me: quentinkleinert850@gmail.com
 
