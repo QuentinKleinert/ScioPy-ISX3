@@ -2,6 +2,24 @@ import struct
 import serial
 import serial.tools.list_ports
 import csv
+import check_User_Input as input_user
+from itertools import chain
+import util
+import time
+
+
+msg_dict = {
+    "0x01": "No message inside the message buffer",
+    "0x02": "Timeout: Communication-timeout (less data than expected)",
+    "0x04": "Wake-Up Message: System boot ready",
+    "0x11": "TCP-Socket: Valid TCP client-socket connection",
+    "0x81": "Not-Acknowledge: Command has not been executed",
+    "0x82": "Not-Acknowledge: Command could not be recognized",
+    "0x83": "Command-Acknowledge: Command has been executed successfully",
+    "0x84": "System-Ready Message: System is operational and ready to receive data",
+    "0x92": "Data holdup: Measurement data could not be sent via the master interface",
+}
+
 
 
 class ISX3:
@@ -9,6 +27,10 @@ class ISX3:
         self.n_el = n_el
         self.serial_protocol = None
         self.device = None
+        self.frequency_points = 0
+        self.ret_hex_int = None
+        self.print_msg = True
+        self.ret_hex_int = None
 
     def is_port_available(self, port: str) -> bool:
         """Check if the specified COM port is available."""
@@ -17,11 +39,18 @@ class ISX3:
 
     def connect_device_FS(self, port: str):
         """Connect to ISX-3 via virtual COM port (USB)."""
-        self.serial_protocol = "FS"
+
 
         if not self.is_port_available(port):
             print(f"Error: Port {port} is not available.")
             return
+
+        if hasattr(self, "serial_protocol"):
+            print(
+                "Serial connection 'self.serial_protocol' already defined as {self.serial_protocol}."
+            )
+        else:
+            self.serial_protocol = "FS"
 
         try:
             self.device = serial.Serial(
@@ -32,98 +61,291 @@ class ISX3:
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
             )
-            print(f"Connected to {self.device.name}. \n")
+            print(f"Successfully Connected to {self.device.name}. \n")
         except serial.SerialException as e:
             print("Error: ", e)
 
+    def SystemMessageCallback_usb_fs(self):
+        """
+        !Only used if a full-speed connection is established!
+
+        Reads the message buffer of a serial connection. Also prints out the general system message.
+        """
+        timeout_count = 0
+        received = []
+        received_hex = []
+        data_count = 0
+
+        while True:
+            buffer = self.device.read()
+            if buffer:
+                received.extend(buffer)
+                data_count += len(buffer)
+                timeout_count = 0
+                continue
+            timeout_count += 1
+            if timeout_count >= 1:
+                # Break if we haven't received any data
+                break
+
+            received = "".join(str(received))  # If you need all the data
+        received_hex = [hex(receive) for receive in received]
+        try:
+            msg_idx = received_hex.index("0x18")
+            if self.print_msg:
+                print(msg_dict[received_hex[msg_idx + 2]])
+        except BaseException:
+            if self.print_msg:
+                print(msg_dict["0x01"])
+            # self.print_msg = False
+        if self.print_msg:
+            print("message buffer:\n", received_hex)
+            print("message length:\t", data_count)
+
+        if self.ret_hex_int is None:
+            return None
+        elif self.ret_hex_int == "hex":
+            return received_hex
+        elif self.ret_hex_int == "int":
+            return received
+        elif self.ret_hex_int == "both":
+            return received, received_hex
+        return None
+
+    def write_command_string(self, command):
+        self.device.write(command)
+        self.SystemMessageCallback_usb_fs()
+
+    def set_fs_settings(self, measurement_mode, measurement_channel="Main Port",
+                        current_measurement_range="autoranging", voltage_measurement_range="1V"):
+        # Clear stack to avoid overflow
+        self.write_command_string(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
+
+        # Convert parameters
+        mode = input_user.check_measurement_mode(measurement_mode)
+        current_range = input_user.check_current_range_settings(current_measurement_range)
+        voltage_range = input_user.check_voltage_range_settings(voltage_measurement_range)
+        channel_code = input_user.check_measurement_channel(measurement_channel)
+
+        if -1 in [mode, current_range, voltage_range, channel_code]:
+            print("Invalid input detected. Aborting.")
+            return
+
+        # 2-byte extension channels (default to 0x0000 if not used)
+        ext = [0x00, 0x00]
+
+        # Build command based on measurement mode
+        if mode == 0x01:  # 2-point
+            command = [
+                0xB0, 0x09, mode, current_range, voltage_range,
+                channel_code, *ext,  # C channel
+                channel_code, *ext,  # W channel
+                0xB0
+            ]
+        elif mode == 0x03:  # 3-point
+            command = [
+                0xB0, 0x0C, mode, current_range, voltage_range,
+                channel_code, *ext,  # C channel
+                channel_code, *ext,  # R channel
+                channel_code, *ext,  # W channel
+                0xB0
+            ]
+        elif mode == 0x02:  # 4-point
+            command = [
+                0xB0, 0x0F, mode, current_range, voltage_range,
+                channel_code, *ext,  # C channel
+                channel_code, *ext,  # R channel
+                channel_code, *ext,  # S channel
+                channel_code, *ext,  # W channel
+                0xB0
+            ]
+        else:
+            print("Unsupported measurement mode. Aborting.")
+            return
+
+        self.device.write(bytearray(command))
+        response = self.device.read(4)
+        print("Response from device: ", response)
+        print("FS settings applied.\n")
+
     def get_fs_settings(self):
         self.device.reset_input_buffer()
-        self.device.write(bytearray([0xB1, 0x00, 0xB1]))
 
-        response = self.device.read(32)  # reads 32 Bytes
-        print("Raw response:", response.hex())
+        # Step 1: Query number of configured channels
+        request = bytearray([0xB1, 0x03, 0x02, 0x00, 0xB1])
+        self.device.write(request)
+        response = self.device.read(16)
 
-        # Search for valid B1-Frames (Start == 0xB1, End == 0xB1, Length == 6)
-        for i in range(len(response) - 5):
-            if response[i] == 0xB1 and response[i + 6] == 0xB1:
-                frame = response[i:i + 7]
-                print("B1-Frame found: ", frame.hex())
-                mode, channel, current, voltage = frame[2:6]
-                print(
-                    f"measurement mode: 0x{mode:02X}, measurement channel: 0x{channel:02X}, "
-                    f"current range settings: 0x{current:02X}, voltage range settings: 0x{voltage:02X}")
-                return
+        if len(response) < 6 or response[0] != 0xB1 or response[-1] != 0xB1:
+            print("No valid B1 response frame for channel count.\n")
+            return
 
-        print("No valid B1 frame found.")
+        num_channels = int.from_bytes(response[2:4], 'big')
+        print(f"Number of configured channels: {num_channels}")
+
+        if num_channels == 0:
+            print("No configured frontend channels.\n")
+            return
+
+        # Step 2: Query each channel config
+        for ch in range(1, num_channels + 1):
+            self.device.reset_input_buffer()
+            self.device.write(bytearray([0xB1, 0x02, ch, 0xB1]))
+            response = self.device.read(32)
+
+            print(f"\nRaw response for channel {ch}:", response.hex())
+
+            for i in range(len(response)):
+                if response[i] == 0xB1:
+                    end_index = response.find(b'\xB1', i + 1)
+                    if end_index != -1:
+                        frame = response[i:end_index + 1]
+                        print("Valid B1 Frame found:", frame.hex())
+
+                        frame_type = frame[1]
+                        mode = frame[2]
+                        current = frame[3]
+                        voltage = frame[4]
+
+                        def get_channel_info(start_index):
+                            ch = frame[start_index]
+                            ext = int.from_bytes(frame[start_index + 1:start_index + 3], 'big')
+                            print("\n")
+                            return ch, ext
+
+                        if frame_type == 0x09 and len(frame) == 17:  # 2-point
+                            ch_c, ext_c = get_channel_info(5)
+                            ch_w, ext_w = get_channel_info(8)
+                            print("2-point configuration:")
+                            print(f"Mode: 0x{mode:02X}, Current: 0x{current:02X}, Voltage: 0x{voltage:02X}")
+                            print(f"C: 0x{ch_c:02X} (ext: {ext_c}), W: 0x{ch_w:02X} (ext: {ext_w})")
+
+                        elif frame_type == 0x0C and len(frame) == 20:  # 3-point
+                            ch_c, ext_c = get_channel_info(5)
+                            ch_r, ext_r = get_channel_info(8)
+                            ch_w, ext_w = get_channel_info(11)
+                            print("3-point configuration:")
+                            print(f"Mode: 0x{mode:02X}, Current: 0x{current:02X}, Voltage: 0x{voltage:02X}")
+                            print(
+                                f"C: 0x{ch_c:02X} (ext: {ext_c}), R: 0x{ch_r:02X} (ext: {ext_r}), W: 0x{ch_w:02X} (ext: {ext_w})")
+
+                        elif frame_type == 0x0F and len(frame) == 23:  # 4-point
+                            ch_c, ext_c = get_channel_info(5)
+                            ch_r, ext_r = get_channel_info(8)
+                            ch_s, ext_s = get_channel_info(11)
+                            ch_w, ext_w = get_channel_info(14)
+                            print("4-point configuration:")
+                            print(f"Mode: 0x{mode:02X}, Current: 0x{current:02X}, Voltage: 0x{voltage:02X}")
+                            print(f"C: 0x{ch_c:02X} (ext: {ext_c}), R: 0x{ch_r:02X} (ext: {ext_r}), "
+                                  f"S: 0x{ch_s:02X} (ext: {ext_s}), W: 0x{ch_w:02X} (ext: {ext_w})")
+                        else:
+                            print("Unknown or unsupported frame format.")
+                        break
+            else:
+                print("No valid B1 frame found for this channel.")
         print("\n")
 
-    def set_fs_settings(self, settings):
-        # empty the stack
-        self.device.write(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
-        # set the measurement channel to Main Port / BNC Channel
-        #self.device.write(bytearray([0xB0, 0x03, 0x02, 0x01, 0x00, 0xB0]))
-        self.device.write(bytearray(settings))
-        print("Set the fs Settings.")
-
-    def set_setup(self, setup):
+    def set_setup(self, start_frequency, end_frequency, count, scale, precision, amplitude, excitation_type):
+        self.print_msg = False
         # resets the setup
         self.device.write(bytearray([0x86, 0x01, 0x01, 0x86]))
 
-        self.device.write(bytearray(setup))
+        self.frequency_points = count
+
+        settings = [
+                    "Start: ", 0xB6, # Start
+                    "Length: ", 0x16,  # Length
+                    "Frequency List Option: ", 0x03, # Add Frequency List
+                    "Start and Stop Frequency: ", input_user.check_frequency_range(start_frequency, end_frequency), #start and stop frequency
+                    "Count: ", input_user.check_count(count), # count
+                    "Scale: ", input_user.check_scale(scale), #scale
+                    "Precision: ", input_user.check_precision(precision), #precision
+                    "Amplitude: ", input_user.check_amplitude(amplitude, excitation_type) # amplitude
+
+                    ]
+        frequency_data = input_user.check_frequency_range(start_frequency, end_frequency)[0] + input_user.check_frequency_range(start_frequency, end_frequency)[1]
+
+        settings_formatted = [0xB6, 0x16, 0x03]
+
+        for data in frequency_data:
+            settings_formatted.append(data)
+
+        for data in input_user.check_count(count):
+            settings_formatted.append(data)
+
+        settings_formatted.append(input_user.check_scale(scale))
+
+        for data in input_user.check_precision(precision):
+            settings_formatted.append(data)
+
+        for data in input_user.check_amplitude(amplitude, excitation_type):
+            settings_formatted.append(data)
+
+        settings_formatted.append(0xB6)
+
+        self.write_command_string(bytearray(settings_formatted))
 
         print("Set the setup. \n")
 
-    def start_measurement(self, cycles: int = 20, frequency_points: int = 60):
-        results = []
+    def get_setup(self):
+        pass
 
+    def start_measurement(self, spectres: int = 20):
         if not self.device:
             print("Device not connected.")
-            return results
+            return []
 
-        # Send measurement start command
-        repeat_low = cycles & 0xFF
-        repeat_high = (cycles >> 8) & 0xFF
-        command = bytearray([0xB8, 0x03, 0x01, repeat_high, repeat_low, 0xB8])
-        self.device.write(command)
+        spectres = input_user.check_input_spectres(spectres)
+        expected_results = spectres * self.frequency_points
 
-        print(f"Started measurement for {cycles} cycles.")
+        print(f"Starts the measuring for {spectres} Cycles...")
 
-        # Read results (frequency points per cycle × cycles total)
-        num_points = frequency_points * cycles
-        for _ in range(num_points):
-            response = self.device.read(13)  # [CT] 0A [ID] [Real] [Imag] [CT]
-            if len(response) == 0:
-                print("Empty response.")
-                continue
+        #starts the measuring
+        self.device.write(bytearray([0xB8, 0x03, 0x01, 0x00, spectres, 0xB8]))
 
-            if len(response) < 13:
-                print(f"ACK received: {response.hex()}")
-                continue
+        # Reads the Data
+        results = self.read_measurement_data(expected_results=expected_results, timeout=10.0)
 
-            """
-            when time stamp and current range are disabled the response is 13 Bytes long
-            0 : CT (Start)
-            1 : LE
-            2-3 : Frequency ID
-            4-7: Real part
-            8-11: imaginary part
-            12: CT (End)
-            """
-            freq_id = int.from_bytes(response[2:4], byteorder='big')
-            real = struct.unpack('>f', response[4:8])[0]
-            imag = struct.unpack('>f', response[8:12])[0]
-            results.append((freq_id, real, imag))
-
-        # to stop measurement mode
+        # Stops the measuring
         self.device.write(bytearray([0xB8, 0x01, 0x00, 0xB8]))
+        self.SystemMessageCallback_usb_fs()  # lies ACK oder Fehler
 
-        #writes it in an CSV File (measurement_results.csv
-        #overwrite the old one every time a new measurement is started
-        with open('measurement_results.csv', mode='w', newline='') as file:
+        # Write to CSV
+        with open("measurement_results.csv", mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(['Frequency ID', 'Real Part', 'Imaginary Part'])  # Header
-            writer.writerows(results)
+            writer.writerow(["Frequency ID", "Real Part", "Imaginary Part"])
+            for row in results:
+                writer.writerow(row)
 
-        print("Measure data was saved in 'measurement_results.csv'. \n")
+        print(f"{len(results)} Measuring Results were written into measurement_results.csv.")
 
+        self.software_reset()
+        time.sleep(6)
         return results
+
+    def read_measurement_data(self, expected_results: int = 100, timeout: float = 5.0):
+        import time
+        start = time.time()
+        results = []
+        buffer = []
+
+        while time.time() - start < timeout and len(results) < expected_results:
+            byte = self.device.read(1)
+            if byte:
+                buffer.append(byte[0])
+
+                if len(buffer) >= 13:
+                    if buffer[-13] == 0xB8 and buffer[-12] == 0x0A and buffer[-1] == 0xB8:
+                        frame = buffer[-13:]
+                        freq_id = int.from_bytes(frame[2:4], 'big')
+                        real = struct.unpack(">f", bytes(frame[4:8]))[0]
+                        imag = struct.unpack(">f", bytes(frame[8:12]))[0]
+                        results.append((freq_id, real, imag))
+                        buffer.clear()
+        return results
+
+    def software_reset(self):
+        self.print_msg = True
+        self.write_command_string(bytearray([0xA1, 0x00, 0xA1]))
+        self.print_msg = False
+
