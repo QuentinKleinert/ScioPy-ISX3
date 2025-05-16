@@ -5,6 +5,21 @@ import csv
 import check_User_Input as input_user
 from itertools import chain
 import util
+import time
+
+
+msg_dict = {
+    "0x01": "No message inside the message buffer",
+    "0x02": "Timeout: Communication-timeout (less data than expected)",
+    "0x04": "Wake-Up Message: System boot ready",
+    "0x11": "TCP-Socket: Valid TCP client-socket connection",
+    "0x81": "Not-Acknowledge: Command has not been executed",
+    "0x82": "Not-Acknowledge: Command could not be recognized",
+    "0x83": "Command-Acknowledge: Command has been executed successfully",
+    "0x84": "System-Ready Message: System is operational and ready to receive data",
+    "0x92": "Data holdup: Measurement data could not be sent via the master interface",
+}
+
 
 
 class ISX3:
@@ -13,7 +28,9 @@ class ISX3:
         self.serial_protocol = None
         self.device = None
         self.frequency_points = 0
-
+        self.ret_hex_int = None
+        self.print_msg = True
+        self.ret_hex_int = None
 
     def is_port_available(self, port: str) -> bool:
         """Check if the specified COM port is available."""
@@ -22,11 +39,18 @@ class ISX3:
 
     def connect_device_FS(self, port: str):
         """Connect to ISX-3 via virtual COM port (USB)."""
-        self.serial_protocol = "FS"
+
 
         if not self.is_port_available(port):
             print(f"Error: Port {port} is not available.")
             return
+
+        if hasattr(self, "serial_protocol"):
+            print(
+                "Serial connection 'self.serial_protocol' already defined as {self.serial_protocol}."
+            )
+        else:
+            self.serial_protocol = "FS"
 
         try:
             self.device = serial.Serial(
@@ -41,10 +65,61 @@ class ISX3:
         except serial.SerialException as e:
             print("Error: ", e)
 
+    def SystemMessageCallback_usb_fs(self):
+        """
+        !Only used if a full-speed connection is established!
+
+        Reads the message buffer of a serial connection. Also prints out the general system message.
+        """
+        timeout_count = 0
+        received = []
+        received_hex = []
+        data_count = 0
+
+        while True:
+            buffer = self.device.read()
+            if buffer:
+                received.extend(buffer)
+                data_count += len(buffer)
+                timeout_count = 0
+                continue
+            timeout_count += 1
+            if timeout_count >= 1:
+                # Break if we haven't received any data
+                break
+
+            received = "".join(str(received))  # If you need all the data
+        received_hex = [hex(receive) for receive in received]
+        try:
+            msg_idx = received_hex.index("0x18")
+            if self.print_msg:
+                print(msg_dict[received_hex[msg_idx + 2]])
+        except BaseException:
+            if self.print_msg:
+                print(msg_dict["0x01"])
+            # self.print_msg = False
+        if self.print_msg:
+            print("message buffer:\n", received_hex)
+            print("message length:\t", data_count)
+
+        if self.ret_hex_int is None:
+            return None
+        elif self.ret_hex_int == "hex":
+            return received_hex
+        elif self.ret_hex_int == "int":
+            return received
+        elif self.ret_hex_int == "both":
+            return received, received_hex
+        return None
+
+    def write_command_string(self, command):
+        self.device.write(command)
+        self.SystemMessageCallback_usb_fs()
+
     def set_fs_settings(self, measurement_mode, measurement_channel="Main Port",
                         current_measurement_range="autoranging", voltage_measurement_range="1V"):
         # Clear stack to avoid overflow
-        self.device.write(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
+        self.write_command_string(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
 
         # Convert parameters
         mode = input_user.check_measurement_mode(measurement_mode)
@@ -100,8 +175,6 @@ class ISX3:
         request = bytearray([0xB1, 0x03, 0x02, 0x00, 0xB1])
         self.device.write(request)
         response = self.device.read(16)
-
-        print("Channel count response:", response.hex())
 
         if len(response) < 6 or response[0] != 0xB1 or response[-1] != 0xB1:
             print("No valid B1 response frame for channel count.\n")
@@ -173,6 +246,7 @@ class ISX3:
         print("\n")
 
     def set_setup(self, start_frequency, end_frequency, count, scale, precision, amplitude, excitation_type):
+        self.print_msg = False
         # resets the setup
         self.device.write(bytearray([0x86, 0x01, 0x01, 0x86]))
 
@@ -209,14 +283,7 @@ class ISX3:
 
         settings_formatted.append(0xB6)
 
-        print("Settings unformatted: ", settings)
-        numbers_in_hex = [util.toHex(number) for number in settings_formatted]
-        print("Numbers in hex: ", numbers_in_hex)
-        print("Settings formatted in Setup: ", settings_formatted)
-
-
-        self.device.write(bytearray(settings_formatted))
-        print("Response for set Setup: ", self.device.read(4))
+        self.write_command_string(bytearray(settings_formatted))
 
         print("Set the setup. \n")
 
@@ -224,109 +291,61 @@ class ISX3:
         pass
 
     def start_measurement(self, spectres: int = 20):
-        results = []
-
-        spectres = input_user.check_input_spectres(spectres)
-
         if not self.device:
             print("Device not connected.")
-            return results
+            return []
 
-        command = bytearray([0xB8, 0x03, 0x01, 0x00, spectres, 0xB8])
-        # [CT] Start, [LE] Length, [OB] Operation (Start/Stop), [CD], [CT] End
-        self.device.write(command)
+        spectres = input_user.check_input_spectres(spectres)
+        expected_results = spectres * self.frequency_points
 
-        print(f"Started measurement for {spectres} cycles.")
+        print(f"Starts the measuring for {spectres} Cycles...")
 
-        num_points = self.frequency_points * spectres
+        #starts the measuring
+        self.device.write(bytearray([0xB8, 0x03, 0x01, 0x00, spectres, 0xB8]))
 
-        for _ in range(num_points):
+        # Reads the Data
+        results = self.read_measurement_data(expected_results=expected_results, timeout=10.0)
 
-            start_byte = b''
-            while start_byte != b'\xB8':
-                start_byte = self.device.read(1)
-                if not start_byte:
-                    print("Timeout waiting for start byte.")
-                    continue
-
-
-            header = self.device.read(1)
-            if not header:
-                print("Missing header byte.")
-                continue
-
-            frame_type = header[0]
-            frame_lengths = {
-                0x0A: 13,
-                0x0B: 14,
-                0x0E: 17,
-                0x0F: 19
-            }
-
-            expected_length = frame_lengths.get(frame_type, 13) - 2
-            rest = self.device.read(expected_length)
-            if len(rest) != expected_length:
-                print("Incomplete frame received.")
-                continue
-
-            frame = start_byte + header + rest
-            print("Received Frame:", frame.hex())
-
-            freq_id = int.from_bytes(frame[2:4], 'big')
-            print(f"Frequency ID received: {freq_id}")
-            real, imag = None, None
-            timestamp = None
-            current_range = None
-
-            if frame_type == 0x0A:
-                real = struct.unpack(">f", frame[4:8])[0]
-                imag = struct.unpack(">f", frame[8:12])[0]
-            elif frame_type == 0x0B:
-                current_range = frame[4]
-                real = struct.unpack(">f", frame[5:9])[0]
-                imag = struct.unpack(">f", frame[9:13])[0]
-            elif frame_type == 0x0E:
-                timestamp = int.from_bytes(frame[4:8], 'big')
-                real = struct.unpack(">f", frame[8:12])[0]
-                imag = struct.unpack(">f", frame[12:16])[0]
-            elif frame_type == 0x0F:
-                timestamp = int.from_bytes(frame[4:8], 'big')
-                current_range = frame[8]
-                real = struct.unpack(">f", frame[9:13])[0]
-                imag = struct.unpack(">f", frame[13:17])[0]
-            else:
-                print("Unrecognized frame type.")
-                continue
-
-            results.append((freq_id, real, imag, timestamp, current_range))
-
-        # Stop measurement
+        # Stops the measuring
         self.device.write(bytearray([0xB8, 0x01, 0x00, 0xB8]))
+        self.SystemMessageCallback_usb_fs()  # lies ACK oder Fehler
 
         # Write to CSV
-        with open('measurement_results.csv', mode='w', newline='') as file:
+        with open("measurement_results.csv", mode='w', newline='') as file:
             writer = csv.writer(file)
-
-            # Determine header
-            header = ['Frequency ID', 'Real Part', 'Imaginary Part']
-            if any(r[3] is not None for r in results):
-                header.append('Timestamp')
-            if any(r[4] is not None for r in results):
-                header.append('Current Range')
-            writer.writerow(header)
-
-            # Write each row
-            for r in results:
-                row = [r[0], r[1], r[2]]
-                if 'Timestamp' in header:
-                    row.append(r[3] if r[3] is not None else '')
-                if 'Current Range' in header:
-                    row.append(r[4] if r[4] is not None else '')
+            writer.writerow(["Frequency ID", "Real Part", "Imaginary Part"])
+            for row in results:
                 writer.writerow(row)
 
-        print("Measurement data saved to 'measurement_results.csv'.\n")
-        print("Result Array: ", results)
+        print(f"{len(results)} Measuring Results were written into measurement_results.csv.")
+
+        self.software_reset()
+        time.sleep(6)
         return results
 
+    def read_measurement_data(self, expected_results: int = 100, timeout: float = 5.0):
+        import time
+        start = time.time()
+        results = []
+        buffer = []
 
+        while time.time() - start < timeout and len(results) < expected_results:
+            byte = self.device.read(1)
+            if byte:
+                buffer.append(byte[0])
+
+                if len(buffer) >= 13:
+                    if buffer[-13] == 0xB8 and buffer[-12] == 0x0A and buffer[-1] == 0xB8:
+                        frame = buffer[-13:]
+                        freq_id = int.from_bytes(frame[2:4], 'big')
+                        real = struct.unpack(">f", bytes(frame[4:8]))[0]
+                        imag = struct.unpack(">f", bytes(frame[8:12]))[0]
+                        results.append((freq_id, real, imag))
+                        buffer.clear()
+        return results
+
+    def software_reset(self):
+        self.print_msg = True
+        self.write_command_string(bytearray([0xA1, 0x00, 0xA1]))
+        self.print_msg = False
 

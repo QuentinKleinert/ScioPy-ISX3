@@ -283,4 +283,3 @@ def check_input_spectres(spectres):
         return default_spectres
 
     return spectres
-
