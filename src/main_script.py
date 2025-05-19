@@ -1,5 +1,3 @@
-import check_User_Input as input_user
-
 from src.ISX3 import ISX3
 
 

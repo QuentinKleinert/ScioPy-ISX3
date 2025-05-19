@@ -3,8 +3,6 @@ import serial
 import serial.tools.list_ports
 import csv
 import check_User_Input as input_user
-from itertools import chain
-import util
 import time
 
 
@@ -23,6 +21,12 @@ msg_dict = {
 
 
 class ISX3:
+    """
+            Initializes an ISX3 device handler.
+
+            Args:
+                n_el (int): Number of electrodes used in the measurement setup.
+            """
     def __init__(self, n_el: int) -> None:
         self.n_el = n_el
         self.serial_protocol = None
@@ -33,21 +37,35 @@ class ISX3:
         self.ret_hex_int = None
 
     def is_port_available(self, port: str) -> bool:
-        """Check if the specified COM port is available."""
+        """
+        Checks if the specified COM port is available.
+
+        Args:
+            port (str): COM port identifier (e.g., "COM3").
+
+        Returns:
+            bool: True if the port is available, False otherwise.
+        """
         available_ports = [p.device for p in serial.tools.list_ports.comports()]
         return port in available_ports
 
     def connect_device_FS(self, port: str):
-        """Connect to ISX-3 via virtual COM port (USB)."""
+        """
+        Connects to the ISX3 device via the specified serial port (USB full-speed).
 
+        Args:
+            port (str): COM port to connect to (e.g., "COM3").
 
+        Raises:
+            serial.SerialException: If the connection cannot be established.
+        """
         if not self.is_port_available(port):
             print(f"Error: Port {port} is not available.")
             return
 
         if hasattr(self, "serial_protocol"):
             print(
-                "Serial connection 'self.serial_protocol' already defined as {self.serial_protocol}."
+                f"Serial connection 'self.serial_protocol' already defined as {self.serial_protocol}."
             )
         else:
             self.serial_protocol = "FS"
@@ -67,9 +85,10 @@ class ISX3:
 
     def SystemMessageCallback_usb_fs(self):
         """
-        !Only used if a full-speed connection is established!
+        Reads system messages from the serial buffer and interprets them.
 
-        Reads the message buffer of a serial connection. Also prints out the general system message.
+        Returns:
+            list or tuple or None: Depending on `ret_hex_int`, returns hexadecimal, integer values, both, or None.
         """
         timeout_count = 0
         received = []
@@ -113,11 +132,29 @@ class ISX3:
         return None
 
     def write_command_string(self, command):
+        """
+                Writes a command to the device and processes the resulting system message.
+
+                Args:
+                    command (bytearray): Formatted command frame.
+                """
         self.device.write(command)
         self.SystemMessageCallback_usb_fs()
 
     def set_fs_settings(self, measurement_mode, measurement_channel="Main Port",
                         current_measurement_range="autoranging", voltage_measurement_range="1V"):
+        """
+                Configures the frontend settings for the measurement.
+
+                Args:
+                    measurement_mode (int): Measurement mode (1=2-point, 2=4-point, 3=3-point).
+                    measurement_channel (str): Measurement channel to use (e.g., "Main Port").
+                    current_measurement_range (str): Current measurement range (e.g., "10mA").
+                    voltage_measurement_range (str): Voltage measurement range (e.g., "1V").
+
+                Returns:
+                    None
+                """
         # Clear stack to avoid overflow
         self.write_command_string(bytearray([0xB0, 0x03, 0xFF, 0xFF, 0xFF, 0xB0]))
 
@@ -246,6 +283,18 @@ class ISX3:
         print("\n")
 
     def set_setup(self, start_frequency, end_frequency, count, scale, precision, amplitude, excitation_type):
+        """
+                Configures the measurement setup parameters such as frequency range and signal characteristics.
+
+                Args:
+                    start_frequency (str): Starting frequency, e.g., "1kHz".
+                    end_frequency (str): Ending frequency, e.g., "10MHz".
+                    count (int): Number of frequency points.
+                    scale (str): Scale type, "log" or "linear".
+                    precision (float): Measurement precision.
+                    amplitude (str): Signal amplitude.
+                    excitation_type (str): Type of excitation, "voltage" or "current".
+                """
         self.print_msg = False
         # resets the setup
         self.device.write(bytearray([0x86, 0x01, 0x01, 0x86]))
@@ -287,10 +336,16 @@ class ISX3:
 
         print("Set the setup. \n")
 
-    def get_setup(self):
-        pass
-
     def start_measurement(self, spectres: int = 20):
+        """
+                Starts a measurement process and writes results to a CSV file.
+
+                Args:
+                    spectres (int): Number of repetitions for each frequency point.
+
+                Returns:
+                    list of tuple: List containing measurement results as (Frequency ID, Real, Imaginary).
+                """
         if not self.device:
             print("Device not connected.")
             return []
@@ -324,7 +379,16 @@ class ISX3:
         return results
 
     def read_measurement_data(self, expected_results: int = 100, timeout: float = 5.0):
-        import time
+        """
+                Reads measurement data frames from the serial port.
+
+                Args:
+                    expected_results (int): Expected number of measurement results.
+                    timeout (float): Timeout duration in seconds.
+
+                Returns:
+                    list of tuple: Parsed measurement data (Frequency ID, Real, Imaginary).
+                """
         start = time.time()
         results = []
         buffer = []
@@ -345,6 +409,12 @@ class ISX3:
         return results
 
     def software_reset(self):
+        """
+                Sends a software reset command to the device.
+
+                Returns:
+                    None
+                """
         self.print_msg = True
         self.write_command_string(bytearray([0xA1, 0x00, 0xA1]))
         self.print_msg = False
