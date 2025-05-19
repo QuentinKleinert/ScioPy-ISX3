@@ -21,13 +21,14 @@ msg_dict = {
 
 
 class ISX3:
-    """
-            Initializes an ISX3 device handler.
 
-            Args:
-                n_el (int): Number of electrodes used in the measurement setup.
-            """
     def __init__(self, n_el: int) -> None:
+        """
+                    Initializes an ISX3 device handler.
+
+                    Args:
+                        n_el (int): Number of electrodes used in the measurement setup.
+                    """
         self.n_el = n_el
         self.serial_protocol = None
         self.device = None
