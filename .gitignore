@@ -173,4 +173,5 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-measurement_results.csv
+# measurement_results.csv
+./src/measurement_results.csv

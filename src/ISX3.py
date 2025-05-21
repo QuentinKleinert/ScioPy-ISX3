@@ -6,7 +6,7 @@ import check_User_Input as input_user
 import time
 
 
-msg_dict = {
+MSG_DICT = {
     "0x01": "No message inside the message buffer",
     "0x02": "Timeout: Communication-timeout (less data than expected)",
     "0x04": "Wake-Up Message: System boot ready",
@@ -17,8 +17,6 @@ msg_dict = {
     "0x84": "System-Ready Message: System is operational and ready to receive data",
     "0x92": "Data holdup: Measurement data could not be sent via the master interface",
 }
-
-
 
 class ISX3:
 
@@ -35,7 +33,6 @@ class ISX3:
         self.frequency_points = 0
         self.ret_hex_int = None
         self.print_msg = True
-        self.ret_hex_int = None
 
     def is_port_available(self, port: str) -> bool:
         """
@@ -50,7 +47,7 @@ class ISX3:
         available_ports = [p.device for p in serial.tools.list_ports.comports()]
         return port in available_ports
 
-    def connect_device_FS(self, port: str):
+    def connect_device_fs(self, port: str):
         """
         Connects to the ISX3 device via the specified serial port (USB full-speed).
 
@@ -84,7 +81,7 @@ class ISX3:
         except serial.SerialException as e:
             print("Error: ", e)
 
-    def SystemMessageCallback_usb_fs(self):
+    def system_message_callback_usb_fs(self):
         """
         Reads system messages from the serial buffer and interprets them.
 
@@ -93,7 +90,6 @@ class ISX3:
         """
         timeout_count = 0
         received = []
-        received_hex = []
         data_count = 0
 
         while True:
@@ -113,10 +109,10 @@ class ISX3:
         try:
             msg_idx = received_hex.index("0x18")
             if self.print_msg:
-                print(msg_dict[received_hex[msg_idx + 2]])
+                print(MSG_DICT[received_hex[msg_idx + 2]])
         except BaseException:
             if self.print_msg:
-                print(msg_dict["0x01"])
+                print(MSG_DICT["0x01"])
             # self.print_msg = False
         if self.print_msg:
             print("message buffer:\n", received_hex)
@@ -140,7 +136,7 @@ class ISX3:
                     command (bytearray): Formatted command frame.
                 """
         self.device.write(command)
-        self.SystemMessageCallback_usb_fs()
+        self.system_message_callback_usb_fs()
 
     def set_fs_settings(self, measurement_mode, measurement_channel="Main Port",
                         current_measurement_range="autoranging", voltage_measurement_range="1V"):
@@ -161,13 +157,21 @@ class ISX3:
 
         # Convert parameters
         mode = input_user.check_measurement_mode(measurement_mode)
+        if mode == -1:
+            print(f"Invalid Measurement Mode '{measurement_mode}', set it to default Value (4 Points).")
+            mode = 0x02
         current_range = input_user.check_current_range_settings(current_measurement_range)
+        if current_range == -1:
+            print(f"Invalid range mode '{current_measurement_range}', set it to 'autoranging'.")
+            current_range = 0x00
         voltage_range = input_user.check_voltage_range_settings(voltage_measurement_range)
+        if voltage_range == -1:
+            print(f"Invalid voltage range '{voltage_measurement_range}', set it to ±1V.")
+            voltage_range = 0x01
         channel_code = input_user.check_measurement_channel(measurement_channel)
-
-        if -1 in [mode, current_range, voltage_range, channel_code]:
-            print("Invalid input detected. Aborting.")
-            return
+        if channel_code == -1:
+            print(f"Invalid Channel '{measurement_channel}', set it to 'Main Port'.")
+            channel_code = 0x01
 
         # 2-byte extension channels (default to 0x0000 if not used)
         ext = [0x00, 0x00]
@@ -218,7 +222,7 @@ class ISX3:
             print("No valid B1 response frame for channel count.\n")
             return
 
-        num_channels = int.from_bytes(response[2:4], 'big')
+        num_channels = int.from_bytes(response[2:4], "big")
         print(f"Number of configured channels: {num_channels}")
 
         if num_channels == 0:
@@ -302,17 +306,6 @@ class ISX3:
 
         self.frequency_points = count
 
-        settings = [
-                    "Start: ", 0xB6, # Start
-                    "Length: ", 0x16,  # Length
-                    "Frequency List Option: ", 0x03, # Add Frequency List
-                    "Start and Stop Frequency: ", input_user.check_frequency_range(start_frequency, end_frequency), #start and stop frequency
-                    "Count: ", input_user.check_count(count), # count
-                    "Scale: ", input_user.check_scale(scale), #scale
-                    "Precision: ", input_user.check_precision(precision), #precision
-                    "Amplitude: ", input_user.check_amplitude(amplitude, excitation_type) # amplitude
-
-                    ]
         frequency_data = input_user.check_frequency_range(start_frequency, end_frequency)[0] + input_user.check_frequency_range(start_frequency, end_frequency)[1]
 
         settings_formatted = [0xB6, 0x16, 0x03]
@@ -337,12 +330,12 @@ class ISX3:
 
         print("Set the setup. \n")
 
-    def start_measurement(self, spectres: int = 20):
+    def start_measurement(self, spectra: int = 20):
         """
                 Starts a measurement process and writes results to a CSV file.
 
                 Args:
-                    spectres (int): Number of repetitions for each frequency point.
+                    spectra (int): Number of repetitions for each frequency point.
 
                 Returns:
                     list of tuple: List containing measurement results as (Frequency ID, Real, Imaginary).
@@ -351,41 +344,45 @@ class ISX3:
             print("Device not connected.")
             return []
 
-        spectres = input_user.check_input_spectres(spectres)
-        expected_results = spectres * self.frequency_points
+        spectra = input_user.check_input_spectra(spectra)
+        expected_results = spectra * self.frequency_points
 
-        print(f"Starts the measuring for {spectres} Cycles...")
+        print(f"Starts the measuring for {spectra} Cycles...")
 
         #starts the measuring
-        self.device.write(bytearray([0xB8, 0x03, 0x01, 0x00, spectres, 0xB8]))
+        self.device.write(bytearray([0xB8, 0x03, 0x01, 0x00, spectra, 0xB8]))
 
         # Reads the Data
         results = self.read_measurement_data(expected_results=expected_results, timeout=10.0)
 
         # Stops the measuring
-        self.device.write(bytearray([0xB8, 0x01, 0x00, 0xB8]))
-        self.SystemMessageCallback_usb_fs()  # lies ACK oder Fehler
+        self.stop_measurement()
+        self.system_message_callback_usb_fs()  # read ACK or NACK
 
         # Write to CSV
-        with open("measurement_results.csv", mode='w', newline='') as file:
+        with open("measurement_results.csv", mode="w", newline='') as file:
             writer = csv.writer(file)
             writer.writerow(["Frequency ID", "Real Part", "Imaginary Part"])
             for row in results:
                 writer.writerow(row)
 
-        print(f"{len(results)} Measuring Results were written into measurement_results.csv.")
+        print(f"{len(results)} Measurement Results were written into measurement_results.csv.")
 
         self.software_reset()
         time.sleep(6)
         return results
 
-    def read_measurement_data(self, expected_results: int = 100, timeout: float = 5.0):
+    def read_measurement_data(self, expected_results, timeout):
         """
                 Reads measurement data frames from the serial port.
 
                 Args:
                     expected_results (int): Expected number of measurement results.
-                    timeout (float): Timeout duration in seconds.
+
+                    timeout (float): The maximum time in seconds to wait for measurement data from the device.
+                    If the expected number of results is not received within this period, the method stops reading and
+                    returns the data collected up to that point. This prevents indefinite blocking in case of connection
+                    issues or incomplete data transmission
 
                 Returns:
                     list of tuple: Parsed measurement data (Frequency ID, Real, Imaginary).
@@ -402,7 +399,7 @@ class ISX3:
                 if len(buffer) >= 13:
                     if buffer[-13] == 0xB8 and buffer[-12] == 0x0A and buffer[-1] == 0xB8:
                         frame = buffer[-13:]
-                        freq_id = int.from_bytes(frame[2:4], 'big')
+                        freq_id = int.from_bytes(frame[2:4], "big")
                         real = struct.unpack(">f", bytes(frame[4:8]))[0]
                         imag = struct.unpack(">f", bytes(frame[8:12]))[0]
                         results.append((freq_id, real, imag))
@@ -420,3 +417,11 @@ class ISX3:
         self.write_command_string(bytearray([0xA1, 0x00, 0xA1]))
         self.print_msg = False
 
+
+    def stop_measurement(self):
+        """
+        Stops the measurement process.
+        :return: None
+        """
+
+        self.write_command_string(bytearray([0xB8, 0x01, 0x00, 0xB8]))

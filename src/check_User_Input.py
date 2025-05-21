@@ -83,7 +83,7 @@ def check_current_range_settings(current_measurement_range: str):
         Returns:
             int: Corresponding code, or -1 if invalid.
         """
-    input_normalized = current_measurement_range.strip().lower().replace("±", "").replace(" ", "").replace("µ", "u").replace("μ", "u")
+    input_normalized = current_measurement_range.strip().lower().replace("±", "").replace(" ", "").replace("µ", "u")
 
     range_map = {
         "autoranging": 0x00,
@@ -227,7 +227,8 @@ def check_scale(scale: str):
     scales = {
         "linear": 0x00,
         "log": 0x01,
-        "logarithmic": 0x01
+        "logarithmic": 0x01,
+        "lin": 0x01,
     }
     if scale not in scales:
         print("Invalid scale. Setting to default scale (log).")
@@ -355,7 +356,7 @@ def parse_amplitude(value, excitation_type="voltage"):
     if isinstance(value, (int, float)):
         return float(value)
 
-    value = value.strip().lower().replace(" ", "").replace("µ", "u").replace("μ", "u")
+    value = value.strip().lower().replace(" ", "").replace("µ", "u")
     multiplier = 1.0
 
     if excitation_type == "voltage":
@@ -389,26 +390,26 @@ def parse_amplitude(value, excitation_type="voltage"):
         return None  # handled later in check_amplitude
 
 
-def check_input_spectres(spectres):
+def check_input_spectra(spectra):
     """
-        Validates and converts spectres input to integer.
+        Validates and converts spectra input to integer.
 
         Args:
-            spectres (int or str): Number of measurement repetitions.
+            spectra (int or str): Number of measurement repetitions.
 
         Returns:
-            int: Validated number of spectres.
+            int: Validated number of spectra.
         """
-    default_spectres = 20
+    default_spectra = 20
 
     try:
-        spectres = int(spectres)
+        spectra = int(spectra)
     except (TypeError, ValueError):
-        print("Spectres must be an integer. Setting to default.")
-        return default_spectres
+        print("Spectra must be an integer. Setting to default.")
+        return default_spectra
 
-    if not (1 <= spectres <= 65535):
-        print("Spectres out of valid range (1–65535). Setting to default.")
-        return default_spectres
+    if not (1 <= spectra <= 65535):
+        print("Spectra out of valid range (1–65535). Setting to default.")
+        return default_spectra
 
-    return spectres
+    return spectra

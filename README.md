@@ -66,7 +66,7 @@ isx3.set_setup(
     excitation_type="voltage"
 )
 
-results = isx3.start_measurement(spectres=10)
+results = isx3.start_measurement(spectra=10)
 print(results)
 
 ```
