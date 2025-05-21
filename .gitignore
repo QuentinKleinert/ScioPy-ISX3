@@ -174,4 +174,4 @@ cython_debug/
 .pypirc
 
 # measurement_results.csv
-./src/measurement_results.csv
+src/measurement_results.csv
